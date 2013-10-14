@@ -23,9 +23,9 @@
 module.exports = function(grunt) {
   'use strict';
 
-  var _ = grunt.util._,
-      helpers = require('grunt-lib-contrib').init(grunt),
-      precompiler = require('../lib/precompiler');
+  var _ = grunt.util._;
+  var helpers = require('grunt-lib-contrib').init(grunt);
+  var path = require('path');
 
   // filename conversion for templates
   var defaultProcessName = function(name) { return name; };
@@ -54,9 +54,12 @@ module.exports = function(grunt) {
     var processName = options.processName || defaultProcessName;
     var processPartialName = options.processPartialName || defaultProcessPartialName;
 
+    var yuiWrapper = options.yui && require('./lib/yui_wrapper.js');
+    var amdWrapper = options.amd && require('./lib/amd_wrapper.js');
+
     this.files.forEach(function(f) {
-      var partials = [],
-          templates = [];
+      var partials = [];
+      var templates = [];
 
       // iterate files, processing partials and templates separately
       f.src.filter(function(filepath) {
@@ -72,7 +75,7 @@ module.exports = function(grunt) {
         var src = grunt.file.read(filepath);
         var compiled, filename;
         try {
-          compiled = precompiler.precompile(src);
+          compiled = require('./lib/ember-template-compiler').precompile(src);
           // if configured to, wrap template in Handlebars.template call
           if (options.wrapped) {
             compiled = 'Ember.Handlebars.template('+compiled+')';
@@ -82,8 +85,14 @@ module.exports = function(grunt) {
           grunt.fail.warn('Handlebars failed to compile '+filepath+'.');
         }
 
-        filename = isPartial.test(_.last(filepath.split('/'))) ? processPartialName(filepath) : processName(filepath);
-        templates.push(nsInfo.namespace+'['+JSON.stringify(filename)+'] = '+compiled+';');
+        // register partial or add template to namespace
+        if (isPartial.test(_.last(filepath.split('/')))) {
+          filename = processPartialName(filepath);
+          partials.push('Ember.Handlebars.registerPartial('+JSON.stringify(filename)+', '+compiled+');');
+        } else {
+          filename = processName(filepath);
+          templates.push(nsInfo.namespace+'['+JSON.stringify(filename)+'] = '+compiled+';');
+        }
       });
 
       var output = partials.concat(templates);
@@ -91,7 +100,14 @@ module.exports = function(grunt) {
         grunt.log.warn('Destination not written because compiled files were empty.');
       } else {
         output.unshift(nsInfo.declaration);
-        grunt.file.write(f.dest, output.join(grunt.util.normalizelf(options.separator)));
+        var content = output.join(grunt.util.normalizelf(options.separator));
+        if (options.yui) {
+          content = yuiWrapper.wrap(content, f.dest, options);
+        }
+        if (options.amd) {
+          content = amdWrapper.wrap(content, f.dest, options);
+        }
+        grunt.file.write(f.dest, content);
         grunt.log.writeln('File "' + f.dest + '" created.');
       }
     });
